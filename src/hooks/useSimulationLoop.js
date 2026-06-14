@@ -46,7 +46,8 @@ export function useSimulationLoop() {
       // s.speed is 1, 10, 30, 60 (real-time multiplier)
       // At 1x speed, 1 real second = 1 sim minute. 
       // 200ms tick = 0.2 real seconds = 0.2 sim minutes
-      const deltaSimMins = safeElapsedSecs * s.speed;
+      // Applied 0.5x multiplier to slow down overall simulation pace
+      const deltaSimMins = safeElapsedSecs * s.speed * 0.5;
       const newSimTime   = s.simTime + deltaSimMins;
 
       // Advance clock
@@ -130,145 +131,155 @@ export function useSimulationLoop() {
       // Physics Engine (Kinematics Step)
       // dt_seconds is the amount of physical seconds that passed in this tick
       // Since deltaSimMins is in minutes, physical seconds is deltaSimMins * 60
-      const dt_seconds = deltaSimMins * 60;
-      const activeTrains = useSimStore.getState().trains.active;
-      let departedTrainNos = [];
+      const total_dt_seconds = deltaSimMins * 60;
+      const numSteps = Math.max(1, Math.ceil(total_dt_seconds / 0.5));
+      const dt_seconds = total_dt_seconds / numSteps;
 
-      const updatedActiveTrains = activeTrains.map(train => {
-        let x = train._phys_x;
-        if (x === undefined) {
-           x = 0;
-           // Find if other trains are queued up at entry
-           const entryTrains = activeTrains.filter(t => t.train_no !== train.train_no && (t._phys_x || 0) < 200);
-           if (entryTrains.length > 0) {
-              const minX = Math.min(...entryTrains.map(t => t._phys_x || 0));
-              if (minX <= 200) {
-                 x = minX - 220; // stagger safely behind by 220m (train length + visible buffer)
+      let currentTrains = useSimStore.getState().trains.active;
+      let departedTrainNosSet = new Set();
+
+      for (let step = 0; step < numSteps; step++) {
+        currentTrains = currentTrains.map(train => {
+          if (departedTrainNosSet.has(train.train_no)) return train;
+
+          let x = train._phys_x;
+          if (x === undefined) {
+             x = 0;
+             // Find if other trains are queued up at entry
+             const entryTrains = currentTrains.filter(t => t.train_no !== train.train_no && (t._phys_x || 0) < 200);
+             if (entryTrains.length > 0) {
+                const minX = Math.min(...entryTrains.map(t => t._phys_x || 0));
+                if (minX <= 200) {
+                   x = minX - 220; // stagger safely behind by 220m (train length + visible buffer)
+                }
+             }
+          }
+          let v = train._phys_v || 0;
+
+          // Kinematic Profiles
+          let maxSpeed = 25; // m/s (~90km/h)
+          let a_trac = 0.5;
+          let a_brake = -0.4;
+
+          if (train.train_type === 'superfast' || train.train_type === 'VIP') {
+            maxSpeed = 38; // 136 km/h
+            a_trac = 0.8;
+            a_brake = -0.6;
+          } else if (train.train_type === 'goods') {
+            maxSpeed = 20.8; // 75 km/h
+            a_trac = 0.2;
+            a_brake = -0.25; // Heavy mass = slow braking
+          }
+
+          // Apply Speed Limits (Track-based)
+          // Assume main_line is 130km/h (36m/s), loop is 30km/h (8.3m/s)
+          const track = s.station?.tracks?.[train._assignedTrack];
+          if (track && track.type !== 'main_line') {
+            maxSpeed = Math.min(maxSpeed, 8.3);
+          }
+
+          // Target state logic
+          let targetSpeed = maxSpeed;
+
+          // Visual enhancement: slow down passing trains near the station so the user can see them!
+          if (train.train_pass_through && x > 1000 && x < 2000) {
+            targetSpeed = Math.min(targetSpeed, 15); // ~54 km/h when passing platform
+          }
+          
+          // Braking logic: distance required to stop from current velocity
+          const stopDist = (v * v) / (2 * Math.abs(a_brake));
+
+          // Rule: Junction collision prevention
+          if (x <= 200) {
+            const blockers = currentTrains.filter(t => 
+              t.train_no !== train.train_no && 
+              t._phys_x !== undefined && t._phys_x <= 200 &&
+              (t._phys_x > x || (t._phys_x === x && t.train_no < train.train_no))
+            );
+            if (blockers.length > 0) {
+              const blocker = blockers.reduce((closest, curr) => 
+                 (curr._phys_x - x) < (closest._phys_x - x) ? curr : closest
+              );
+              if ((blocker._phys_x - x) < stopDist + 220) {
+                targetSpeed = 0;
               }
-           }
-        }
-        let v = train._phys_v || 0;
-
-        // Kinematic Profiles
-        let maxSpeed = 25; // m/s (~90km/h)
-        let a_trac = 0.5;
-        let a_brake = -0.4;
-
-        if (train.train_type === 'superfast' || train.train_type === 'VIP') {
-          maxSpeed = 38; // 136 km/h
-          a_trac = 0.8;
-          a_brake = -0.6;
-        } else if (train.train_type === 'goods') {
-          maxSpeed = 20.8; // 75 km/h
-          a_trac = 0.2;
-          a_brake = -0.25; // Heavy mass = slow braking
-        }
-
-        // Apply Speed Limits (Track-based)
-        // Assume main_line is 130km/h (36m/s), loop is 30km/h (8.3m/s)
-        const track = s.station?.tracks?.[train._assignedTrack];
-        if (track && track.type !== 'main_line') {
-          maxSpeed = Math.min(maxSpeed, 8.3);
-        }
-
-        // Target state logic
-        let targetSpeed = maxSpeed;
-
-        // Visual enhancement: slow down passing trains near the station so the user can see them!
-        if (train.train_pass_through && x > 1000 && x < 2000) {
-          targetSpeed = Math.min(targetSpeed, 15); // ~54 km/h when passing platform
-        }
-        
-        // Braking logic: distance required to stop from current velocity
-        const stopDist = (v * v) / (2 * Math.abs(a_brake));
-
-        // Rule: Junction collision prevention
-        if (x <= 200) {
-          const blockers = activeTrains.filter(t => 
-            t.train_no !== train.train_no && 
-            t._phys_x !== undefined && t._phys_x <= 200 &&
-            (t._phys_x > x || (t._phys_x === x && t.train_no < train.train_no))
-          );
-          if (blockers.length > 0) {
-            const blocker = blockers.reduce((closest, curr) => 
-               (curr._phys_x - x) < (closest._phys_x - x) ? curr : closest
+            }
+          } else if (x >= 2800 && x < 3500) {
+            const blockers = currentTrains.filter(t => 
+              t.train_no !== train.train_no && 
+              t._phys_x !== undefined && t._phys_x >= 2800 && t._phys_x <= 3500 &&
+              (t._phys_x > x || (t._phys_x === x && t.train_no < train.train_no))
             );
-            if ((blocker._phys_x - x) < stopDist + 220) {
-              targetSpeed = 0;
+            if (blockers.length > 0) {
+              const blocker = blockers.reduce((closest, curr) => 
+                 (curr._phys_x - x) < (closest._phys_x - x) ? curr : closest
+              );
+              if ((blocker._phys_x - x) < stopDist + 220) {
+                targetSpeed = 0;
+              }
+            }
+          } else {
+            // Mid-track collision prevention (same track only)
+            const blockers = currentTrains.filter(t => 
+              t.train_no !== train.train_no && 
+              t._assignedTrack === train._assignedTrack &&
+              t._phys_x !== undefined && t._phys_x > x
+            );
+            if (blockers.length > 0) {
+              const blocker = blockers.reduce((closest, curr) => 
+                 (curr._phys_x - x) < (closest._phys_x - x) ? curr : closest
+              );
+              if ((blocker._phys_x - x) < stopDist + 220) {
+                targetSpeed = 0;
+              }
             }
           }
-        } else if (x >= 2800 && x < 3500) {
-          const blockers = activeTrains.filter(t => 
-            t.train_no !== train.train_no && 
-            t._phys_x !== undefined && t._phys_x >= 2800 && t._phys_x <= 3500 &&
-            (t._phys_x > x || (t._phys_x === x && t.train_no < train.train_no))
-          );
-          if (blockers.length > 0) {
-            const blocker = blockers.reduce((closest, curr) => 
-               (curr._phys_x - x) < (closest._phys_x - x) ? curr : closest
-            );
-            if ((blocker._phys_x - x) < stopDist + 220) {
-              targetSpeed = 0;
-            }
-          }
-        } else {
-          // Mid-track collision prevention (same track only)
-          const blockers = activeTrains.filter(t => 
-            t.train_no !== train.train_no && 
-            t._assignedTrack === train._assignedTrack &&
-            t._phys_x !== undefined && t._phys_x > x
-          );
-          if (blockers.length > 0) {
-            const blocker = blockers.reduce((closest, curr) => 
-               (curr._phys_x - x) < (closest._phys_x - x) ? curr : closest
-            );
-            if ((blocker._phys_x - x) < stopDist + 220) {
-              targetSpeed = 0;
-            }
-          }
-        }
-        
-        if (train.isHalted) {
-          // Emergency stop immediately
-          targetSpeed = 0;
-          v = 0;
-        } else if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x < 1550) {
-          // Stopping train approaching platform (center = 1500m)
-          const distToPlatform = Math.max(0, 1500 - x);
-          if (distToPlatform <= stopDist + 30) {
+          
+          if (train.isHalted) {
+            // Emergency stop immediately
             targetSpeed = 0;
-          }
-        } else if (x >= 3500) {
-          // Reached end of track (2km from station)
-          departedTrainNos.push(train.train_no);
-        }
-
-        // If dwelling at platform (robust clamping to catch overshoots at high speed)
-        if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x >= 1450 && x <= 1550 && v < 8) {
-          v = 0;
-          x = 1500;
-        } else {
-          // Calculate acceleration
-          let accel = 0;
-          if (v < targetSpeed) {
-            accel = a_trac;
-          } else if (v > targetSpeed) {
-            accel = a_brake;
+            v = 0;
+          } else if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x < 1550) {
+            // Stopping train approaching platform (center = 1500m)
+            const distToPlatform = Math.max(0, 1500 - x);
+            if (distToPlatform <= stopDist + 30) {
+              targetSpeed = 0;
+            }
+          } else if (x >= 3500) {
+            // Reached end of track (2km from station)
+            departedTrainNosSet.add(train.train_no);
           }
 
-          // Resistance (simple drag)
-          if (v > 0) accel -= (0.01 * v);
+          // If dwelling at platform (robust clamping to catch overshoots at high speed)
+          if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x >= 1450 && x <= 1550 && v < 8) {
+            v = 0;
+            x = 1500;
+          } else {
+            // Calculate acceleration
+            let accel = 0;
+            if (v < targetSpeed) {
+              accel = a_trac;
+            } else if (v > targetSpeed) {
+              accel = a_brake;
+            }
 
-          // Update velocity and position
-          v += accel * dt_seconds;
-          if (v < 0) v = 0; // No reversing yet
-          if (v > maxSpeed && targetSpeed === maxSpeed) v = maxSpeed;
+            // Resistance (simple drag)
+            if (v > 0) accel -= (0.01 * v);
 
-          x += v * dt_seconds;
-        }
+            // Update velocity and position
+            v += accel * dt_seconds;
+            if (v < 0) v = 0; // No reversing yet
+            if (v > maxSpeed && targetSpeed === maxSpeed) v = maxSpeed;
 
-        return { ...train, _phys_x: x, _phys_v: v };
-      });
+            x += v * dt_seconds;
+          }
+
+          return { ...train, _phys_x: x, _phys_v: v };
+        });
+      }
+
+      const updatedActiveTrains = currentTrains;
+      const departedTrainNos = Array.from(departedTrainNosSet);
 
       // Commit physics state
       useSimStore.setState(prev => ({

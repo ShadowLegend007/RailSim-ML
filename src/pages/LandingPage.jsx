@@ -1317,12 +1317,12 @@ function TechStackSection({ scrollY }) {
           <h2 className="section-title">The Stack Behind the Signal</h2>
           <p className="section-sub" style={{ margin: '0 auto' }}>Every layer chosen for reliability under simulation load and ML pipeline compatibility.</p>
         </div>
-        <div className="tech-strip" style={{ transform: `translateY(${scrollY * 0.05}px)`, willChange: 'transform' }}>
+        <div className="tech-strip">
           {TECH.map((t, i) => (
             <TechChip key={i} {...t} delay={i * 60} />
           ))}
         </div>
-        <div style={{ transform: `translateY(${scrollY * 0.02}px)`, willChange: 'transform' }}>
+        <div>
           <div className="pull-quote scroll-reveal" style={{ '--reveal-delay': '200ms' }}>
             <span className="pull-quote-mark open">&ldquo;</span>
             <p className="pull-quote-text">A 28-rule constraint engine that allocates tracks in under 50 milliseconds &mdash; before any ML model is even plugged in.</p>
