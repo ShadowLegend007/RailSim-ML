@@ -164,6 +164,9 @@ When a fallback triggers:
 2. The simulation dispatches the allocation request to the local `greedyAssign` logic, which routes it through `trainAllocationService.allocateTrainAdvanced`.
 3. The deterministic engine evaluates all 28 operational rules to identify the highest-scoring safe track.
 
+For a comprehensive catalog of all 28 operational rules with their detailed explanations, refer to the [FALLBACK_RULES.txt](file:///d:/Programming/RailSim-ML/FALLBACK_RULES.txt) reference file in the project root.
+
+
 
 ---
 

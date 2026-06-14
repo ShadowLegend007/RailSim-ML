@@ -1,0 +1,140 @@
+RAILSIM ML — DETERMINISTIC PLATFORM ALLOCATION FALLBACK RULES
+=============================================================
+
+This document lists and explains all 28 deterministic routing constraints and safety rules implemented in the RailSim ML simulation engine. These rules are used to assign tracks and platforms whenever the machine learning model fails, triggers a low-confidence threshold, or experiences network downtime.
+
+-------------------------------------------------------------
+TEMPORAL & SPACING RULES
+-------------------------------------------------------------
+
+Rule 1: Check Target Line Availability
+- Rule: Before allocating a train, check the track timeline to ensure the target line is completely free for the entire train_platform_duration or train_stand_by_duration.
+- Explanation: The system maintains a 24-hour time-series occupancy grid for every single track (0-9). Before placing a train, the allocation engine checks if the specific window between arrival and departure times intersects with any pre-existing block on that track. If train_pass_through = 1, the time block is extremely short (e.g., 2 minutes). Otherwise, the track is locked for the full duration.
+
+Rule 2: Mandatory Safety Buffer
+- Rule: Apply a mandatory safety buffer window before and after a train's scheduled time on a track to prevent overlap and collision.
+- Explanation: Trains cannot operate perfectly to the millisecond. The engine automatically pads every scheduled duration with a buffer (e.g., +5 minutes before arrival and +5 minutes after departure) to account for signal clearance, interlocking release, and minor delays, ensuring a trailing train never enters an occupied block.
+
+Rule 16: Active Run Day Verification
+- Rule: Before considering a train for allocation, verify the current day of the week against the runs_mon through runs_sun boolean flags to ensure the train is operating today.
+- Explanation: The timetable lists all possible scheduled trains, but not all run daily. The engine parses the boolean flag (1 or 0) for the current system day. If today is Monday and runs_mon = 0, the train is ignored entirely in today's allocation matrix.
+
+Rule 27: Mathematical Boundary Inference
+- Rule: For trains missing an arrival or departure time (because they originate or terminate here), mathematically infer the missing boundary using the standby or platform duration to lock the time slot.
+- Explanation: In the timetable scheduler, originating trains have no arrival time, and terminating trains have no departure time. The engine must compute the missing value (e.g., Departure Time = Arrival Time + train_termination_stand_by_duration) to accurately lock the necessary timeline blocks.
+
+-------------------------------------------------------------
+PASSENGER & PLATFORM OPTIMIZATION
+-------------------------------------------------------------
+
+Rule 3: Stoppage Requires Platform
+- Rule: If it is a passenger train with a scheduled stoppage (train_pass_through = 0), strictly allocate a line that has an associated_platform.
+- Explanation: Passenger safety is an absolute hard constraint. The engine must verify the associated_platform array in the track configuration is not empty. Tracks 5 and 8 are completely excluded from standard passenger stoppage allocation.
+
+Rule 4: Passenger Density & Entrance Alignment
+- Rule: Allocate platforms based on passenger appearance: assign heavy commuter trains to platforms with "passenger_density": "high" which are nearest to main station entrances.
+- Explanation: High-volume commuter trains like MEMU or INTERCITY carry massive crowds. The engine routes these strictly to Platforms 1, 2, and 7, which are designated as high-density platforms. This ensures the station's staircases, footbridges, and exit paths can handle the sudden surge of foot traffic safely.
+
+Rule 9: Coach Length Check
+- Rule: Before finalizing a platform, verify that the train_coaches count does not exceed the maximum "train_length" allowed for that specific platform.
+- Explanation: This is a physical boundary constraint. The engine extracts the train_coaches (e.g., 24 coaches) and checks the platform train_length (e.g., Platform 6 holds "15 coaches"). A 24-coach train cannot be assigned to Platform 6, as the rear coaches would hang off the platform into the active switch-yard, creating a collision hazard.
+
+Rule 10: Water Filling Infrastructure
+- Rule: If a train requires water (water_filling = 1), strictly allocate it only to tracks where "water_filling": true is enabled.
+- Explanation: Maintenance constraints override standard routing. The engine restricts valid routing targets exclusively to Tracks 0, 1, and 9. All other tracks are hard-rejected for this specific train.
+
+Rule 15: Overstay Shunting Trigger
+- Rule: If a train exceeds its "max_waiting_period" on a platform, trigger an alert or automatically assign a locomotive to shunt it to a "carshade_line" to clear the platform.
+- Explanation: Platforms are premium real estate. Platform 1 has a "max_waiting_period" of just 10 minutes. If a train breaks down or overstays, the engine recognizes the bottleneck and shunts the train to a carshade loop line to reopen the main platform.
+
+Rule 21: Overhead Electrification Check
+- Rule: Before assigning any standard passenger train to a platform, confirm that "electrified": true is set for that platform to ensure the locomotive has overhead power.
+- Explanation: If an electric locomotive is routed to a non-electrified siding, it will lose power and become stranded. The engine must cross-check the electrification parameter before locking the assignment.
+
+Rule 24: Pass-Through Terminal Ban
+- Rule: If a passenger train is passing through the station without stopping, it must strictly be banned from any platform where "platform_type": "terminal" (dead-ends).
+- Explanation: Platform 1A (Track 9) is a dead-end track. If a pass-through train is routed here, it will crash into the terminal buffers. Bypass trains must strictly be assigned to tracks with "platform_type": "passthrough".
+
+-------------------------------------------------------------
+GOODS & FREIGHT ROUTING
+-------------------------------------------------------------
+
+Rule 5: Freight Track Segregation
+- Rule: If the train type is GOODS, strictly route it through tracks where the train_type allows "goods", and firmly block it from passenger-only lines.
+- Explanation: The engine checks the train_type array for every track. If a train is GOODS, Track 9 is instantly removed from the matrix, as it only accepts "passenger" types.
+
+Rule 6: Freight Bypass Route
+- Rule: If there are extra GOODS trains or non-stopping trains (train_pass_through = 1), pass them through dedicated platform-less bypass lines to keep passenger platforms free.
+- Explanation: To maximize operational efficiency, pass-through freight is given a heavy soft-constraint weight pulling them toward Tracks 5 and 8. These tracks have no platforms, meaning goods trains won't disrupt passenger boarding operations on the main lines.
+
+Rule 12: Goods Termination Restriction
+- Rule: If a GOODS train is terminating, it must exclusively be routed to tracks where "goods_train_termination": true so freight uncoupling doesn't block passenger operations.
+- Explanation: Freight uncoupling requires specific yard layouts. Terminating goods are strictly forced onto Tracks 4, 5, or 8 so they do not block standard platforms.
+
+Rule 19: Infrastructure Tonnage Check
+- Rule: Cross-reference the weight of the train with the track's "line_capacity", routing massive 60-coach GOODS trains to Category A tracks over Category B.
+- Explanation: Heavily loaded freight trains degrade standard rail infrastructure. A 60-coach goods train is weighted toward tracks built to handle the tonnage ("line_capacity": "Category A") to prevent rail fractures.
+
+Rule 23: Goods Scheduled Stop Siding
+- Rule: If a GOODS train has a scheduled stop, it must strictly be routed to a track where "goods_train_stop": true, keeping main lines clear of parked freight.
+- Explanation: Freight trains loading/unloading require heavy equipment space. Mainlines (Tracks 0 and 1) have "goods_train_stop": false. The engine must push parked freight strictly into the designated loop lines.
+
+-------------------------------------------------------------
+MOVEMENT & TRAFFIC CONTROL
+-------------------------------------------------------------
+
+Rule 7: Superfast Mainline Priority
+- Rule: If a premium train (SUPERFAST) is passing through without stopping, allocate it to a "main_line" to maintain its momentum at the maximum "speed_limit".
+- Explanation: Routing a pass-through SUPERFAST to a "loop_line" forces the train to decelerate from 130 kmph to 110 kmph to handle the curved turnout. The engine assigns them strictly to Tracks 0 or 1 (main_line) to save energy and time.
+
+Rule 13: Strict Direction Matching
+- Rule: Match the train's physical route direction (Up/Down) strictly with the track's "direction" property.
+- Explanation: A train traveling the "down" route forcefully placed on an "up" directional track causes massive upstream bottlenecks. The engine uses this direction matching as a primary filter.
+
+Rule 14: Loop Line Bidirectional Fallback
+- Rule: If primary directional main lines (Up/Down) are completely blocked, dynamically route the incoming train to a "loop_line" where "direction": "both".
+- Explanation: If Track 0 is occupied, rather than forcing the train to wait at a red signal outside the station, the engine cascades the train into the bidirectional overflow tracks (Tracks 2 through 8).
+
+Rule 25: Passthrough Validation
+- Rule: Before assigning any bypass train (train_pass_through = 1), verify the track's "passthrough" flag is true, excluding tracks that cannot handle bypass operations.
+- Explanation: Some tracks are physically blocked at one end. Tracks 5, 7, 8, and 9 have "passthrough": false. Any bypass train routed here would be trapped.
+
+Rule 20: Corridor Switch Junction Routing
+- Rule: If a train needs to switch to a different rail corridor upon leaving the station, allocate it to a track where "junction_point": true.
+- Explanation: If a train is leaving the mainline to join a branch line, it needs physical access to the diverging switchpoints. Tracks 0, 2, 4, 5, and 7 contain these switches, so the engine routes diverging traffic there.
+
+Rule 18: Exit Route Alignment
+- Rule: Check the train's next_destination and allocate the train to a track direction that naturally aligns with the exit route to minimize crossing conflicting lines.
+- Explanation: If destination 'A' is accessed via the station's left side, routing the train to the far right track means it has to cut diagonally across all active lines to leave, locking the whole station. The engine maps the route to the track physically closest to the exit trajectory.
+
+-------------------------------------------------------------
+TERMINATION & SHUNTING OPERATIONS
+-------------------------------------------------------------
+
+Rule 11: Terminating Siding Target
+- Rule: If a train is ending its journey (train_terminate = 1) or starting its shift (train_start_from_here = 1), route it specifically to tracks where "terminal": true.
+- Explanation: Terminating trains must be parked, cleaned, and reversed. Doing this on a continuous-flow main line halts all traffic. The engine restricts terminating passenger trains to Tracks 3, 4, 6, 7, and 9.
+
+Rule 17: Carshade Routing for Long Standby
+- Rule: If a train has a massive train_termination_stand_by_duration, route it to a track where "carshade": true to prevent it from idling on and blocking active main lines.
+- Explanation: A train sitting for 100+ minutes is "sleeping." The engine must route it to tracks equipped with covered maintenance sidings to free up commercial track space.
+
+-------------------------------------------------------------
+CROSSING & SIGNAL INTERLOCKING SAFETY
+-------------------------------------------------------------
+
+Rule 8: Convergence Interlocking Red Signal
+- Rule: While a train crosses a line or shunts, immediately allocate a red signal to the "signal_no" of all converging tracks to avoid collision.
+- Explanation: If a train takes crossing1 to move from Track 1 to Track 0, the engine queries the active switch layout for the intersecting signals (L11A, L12A) and turns them to Danger/Red, stopping any approaching mainline traffic from entering that intersection.
+
+Rule 22: Dynamic Signal Release Calculation
+- Rule: When calculating crossing conflicts, use "distance_between_signal" and "track_length" to calculate the exact seconds the intersection is blocked, turning the signal green immediately once cleared.
+- Explanation: The engine applies basic physics (Time = Distance / Velocity). By calculating the length of the train and the track length, the engine knows the exact second the tail of the train clears the crossing, freeing the intersection dynamically rather than locking it with rigid static timers.
+
+Rule 26: Crossing Path Type Filters
+- Rule: When mapping a route across "line_crossings", strictly route GOODS trains only through "goods_line_crossing": true and terminating trains through "terminal_line_crossing": true.
+- Explanation: Certain switches are built for speed, not weight. If the engine routes a loaded goods train through a passenger-only switch (goods_line_crossing: false), the turning radius or weight limit might cause a derailment.
+
+Rule 28: Carshade Crossing Safety
+- Rule: If an engine or terminating train requires extended parking, strictly navigate it using a crossing where "carshade_line_crossing": true to reach a track where "carshade_line": true.
+- Explanation: Shunting locos to maintenance requires using specific heavy-duty switch crossings. The engine plans the physical path avoiding high-speed main switches.
