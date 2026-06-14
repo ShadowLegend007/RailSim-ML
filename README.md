@@ -64,52 +64,106 @@ RailSim ML serves a dual purpose:
 railsim-ml/
 ├── src/
 │   ├── components/
-│   │   ├── StationBuilder/          # 4-step wizard (identity, infra, tracks/platforms, review)
-│   │   ├── SimulationDashboard/     # Main layout: track map + queue + metrics
-│   │   ├── TrackMap/                # SVG renderer: tracks, trains, signals, crossings
-│   │   ├── TrainQueue/              # Incoming train list + ML assignment log
-│   │   ├── MetricsPanel/            # Live gauges, heatmap, throughput charts
-│   │   ├── SpecialTrainModal/       # Inject special trains with constraint overrides
-│   │   └── EventLog/                # Timestamped simulation event stream
-│   ├── engine/
-│   │   ├── allocationEngine.js      # Core 28-rule deterministic router
-│   │   ├── timelineManager.js       # Per-track 24h time-series occupancy grid
-│   │   ├── conflictResolver.js      # Conflict detection + auto-resolution
-│   │   ├── trainGenerator.js        # Rush-level-aware random train data generator
-│   │   └── signalController.js      # Signal state machine (red/green based on crossings)
+│   │   ├── builder/                 # 4-step station configuration wizard
+│   │   ├── LiveTrackMap.jsx         # Live SVG-rendered track layout, trains, & signals
+│   │   ├── IncomingTrainsQueue.jsx  # Real-time inbound train queue list
+│   │   ├── StationMasterTimeTable.jsx # 24h timetable timeline & allocation viewer
+│   │   └── TrainDetailDrawer.jsx    # Manual track re-allocation & constraint overrides
+│   ├── hooks/
+│   │   ├── useSimulationLoop.js     # Simulation clock loop & async ML prediction coordinator
+│   │   └── useTrainSimulation.js    # Simulation controls & state initialization
+│   ├── pages/
+│   │   ├── MainDashboard.jsx        # Primary layout for simulation control & telemetry
+│   │   └── StationBuilder.jsx       # Interface container for custom station building
+│   ├── services/
+│   │   ├── mlService.js             # API bridge interfacing with the /predict endpoint
+│   │   ├── trainAllocationService.js # Core 28-rule deterministic allocation engine
+│   │   └── trainAllocationAPI.js    # API service layer for validation and batching
 │   ├── store/
-│   │   └── useSimStore.js           # Zustand store with session persistence
-│   └── data/
-│       └── sampleStation.json       # RDM Junction reference configuration
+│   │   └── useSimStore.js           # Zustand store with session persistence across reloads
+│   └── utils/
+│       ├── trainGenerator.js        # Schedule injector aware of rush level
+│       └── greedyAssign.js          # Hybrid router dispatching to ML or falling back to rules
 ```
 
 ### Data Flow
 
+The simulation routes trains by querying the machine learning model first. If the model fails or has low confidence, the engine falls back to the deterministic 28-rule constraint engine.
+
 ```
-Station JSON
-     |
-     v
-Station Builder ---> Zustand Store <---- Rush Level Controller
-                         |
-                         v
-               Train Generator (spawn queue)
-                         |
-                         v
-               Allocation Engine (28 rules)
-                         |
-              +----------+----------+
-              v                     v
-     Track Assignment           Conflict?
-     + Signal Update            |
-              |                 v
-              |          Auto-resolve or
-              |          Surface to User
-              v
-     Timeline Lock + Event Log Entry
-              |
-              v
-     SVG Track Map Update + Metrics Refresh
+                  Train Spawned / Arrived
+                             |
+                             v
+               +---------------------------+
+               |    ML Allocation Hook     |
+               |  (useSimulationLoop.js)   |
+               +-------------+-------------+
+                             |
+                             v
+               [Query ML Model (/predict)]
+                             |
+              +--------------+--------------+
+              |                             |
+              v (Success)                   v (Error / Timeout)
+     +-----------------+           +------------------+
+     | Check ML Output |           |  Trigger Rules   |
+     |   Confidence    |           |  Fallback path   |
+     +--------+--------+           +--------+---------+
+              |                             |
+       +------+------+                      |
+       |             |                      |
+       v (>= 80%)    v (< 80%)              v
+    [Apply ML]    [Trigger Fallback] ------>|
+       |             |                      |
+       |             +--------------------->|
+       |                                    v
+       |                          +-------------------+
+       |                          | Deterministic     |
+       |                          | Allocation Engine |
+       |                          | (28 Rules Engine) |
+       |                          +---------+---------+
+       |                                    |
+       v                                    v
+  +----+------------------------------------+----+
+  |              Final Track Assignment           |
+  +-------------------------+---------------------+
+                            |
+                            v
+             +--------------+--------------+
+             v                             v
+    Timeline Booking                Signal Interlocking
+   (timelineManager.js)            (signalController.js)
+             |                             |
+             +--------------+--------------+
+                            |
+                            v
+               SVG Track Map & Metrics UI Update
 ```
+
+### ML Integration & Fallback Logic
+
+To optimize traffic throughput, RailSim ML implements a hybrid decision-making architecture that marries the flexibility of predictive machine learning models with the absolute safety guarantees of a rule-based system.
+
+#### 1. ML Model API Communication
+When a train approaches the station approach radius, the simulation loop packages the system state and POSTs to the configured `/predict` endpoint:
+- **Payload Schema**:
+  - `station`: Metadata, track capabilities, platform attributes (length, density, electrification).
+  - `incoming_train`: Complete train specification (type, coaches, standby duration, water requirements).
+  - `current_occupancy`: Real-time mapping of track-to-train occupancy.
+- **Request Lifecycle**: Managed via `mlService.predictAssignment`. It features an active network timeout threshold of 5000ms. If the model API responds within the window, the predicted `track_id` and `platform_id` are extracted along with the prediction confidence.
+
+#### 2. Deterministic Rule-Based Fallback
+To ensure high-availability and prevent collisions, the system routes assignments through a strict safety fallback path in the following conditions:
+- **Network Failures**: API server unreachable, DNS lookup fails, or HTTP status error codes (e.g. 500, 502).
+- **Timeouts**: The prediction endpoint fails to respond within 5000ms.
+- **Low Confidence Predictions**: Predictions returned with a confidence score below the configured threshold (default 80%).
+- **Rule Violations**: If the ML prediction violates any hard safety constraints (e.g., routing a non-electrified or too-long train to a restricted platform), the system detects the hazard.
+
+When a fallback triggers:
+1. The client-side status flag changes to `fallback` (notifying the Station Master via the UI).
+2. The simulation dispatches the allocation request to the local `greedyAssign` logic, which routes it through `trainAllocationService.allocateTrainAdvanced`.
+3. The deterministic engine evaluates all 28 operational rules to identify the highest-scoring safe track.
+
 
 ---
 
