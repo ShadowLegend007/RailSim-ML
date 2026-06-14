@@ -43,6 +43,9 @@ function isCompatible(track, platform, train, occupancy, maintenanceTracks, disa
   // 5. Termination
   if (train.train_terminate && platform && !platform.termination) return false;
 
+  // 6. Dwelling trains MUST have a platform
+  if (!train.train_pass_through && !platform) return false;
+
   // 6. Platform length
   if (platform) {
     const platformLengthM = parseInt(

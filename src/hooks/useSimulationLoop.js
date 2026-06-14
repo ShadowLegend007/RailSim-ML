@@ -155,6 +155,11 @@ export function useSimulationLoop() {
 
         // Target state logic
         let targetSpeed = maxSpeed;
+
+        // Visual enhancement: slow down passing trains near the station so the user can see them!
+        if (train.train_pass_through && x > 1000 && x < 2000) {
+          targetSpeed = Math.min(targetSpeed, 15); // ~54 km/h when passing platform
+        }
         
         // Braking logic: distance required to stop from current velocity
         const stopDist = (v * v) / (2 * Math.abs(a_brake));
@@ -174,10 +179,10 @@ export function useSimulationLoop() {
               targetSpeed = 0;
             }
           }
-        } else if (x >= 2800 && x < 3000) {
+        } else if (x >= 2800 && x < 3500) {
           const blockers = activeTrains.filter(t => 
             t.train_no !== train.train_no && 
-            t._phys_x !== undefined && t._phys_x >= 2800 && t._phys_x <= 3000 &&
+            t._phys_x !== undefined && t._phys_x >= 2800 && t._phys_x <= 3500 &&
             (t._phys_x > x || (t._phys_x === x && t.train_no < train.train_no))
           );
           if (blockers.length > 0) {
@@ -209,19 +214,19 @@ export function useSimulationLoop() {
           // Emergency stop immediately
           targetSpeed = 0;
           v = 0;
-        } else if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x < 1500) {
+        } else if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x < 1550) {
           // Stopping train approaching platform (center = 1500m)
-          const distToPlatform = 1500 - x;
-          if (distToPlatform <= stopDist + 10) {
+          const distToPlatform = Math.max(0, 1500 - x);
+          if (distToPlatform <= stopDist + 30) {
             targetSpeed = 0;
           }
-        } else if (x >= 3000) {
-          // Reached end of track
+        } else if (x >= 3500) {
+          // Reached end of track (2km from station)
           departedTrainNos.push(train.train_no);
         }
 
-        // If dwelling at platform
-        if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && Math.abs(x - 1500) < 5) {
+        // If dwelling at platform (robust clamping to catch overshoots at high speed)
+        if (!train.train_pass_through && newSimTime < (train._departureAt || 0) && x >= 1450 && x <= 1550 && v < 8) {
           v = 0;
           x = 1500;
         } else {
@@ -309,8 +314,31 @@ export function useSimulationLoop() {
       }
     };
 
+    // Save session synchronously if user reloads or closes tab
+    const handleBeforeUnload = () => {
+      const st = useSimStore.getState();
+      if (!st.simStarted) return;
+      try {
+        const prev = JSON.parse(sessionStorage.getItem(SESSION_KEY) || '{}');
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+          ...prev,
+          simTime: st.simTime,
+          rushLevel: st.rushLevel,
+          simStarted: st.simStarted,
+          fullTrains: st.trains,
+          trackOccupancy: st.trackOccupancy,
+          trackTimeline: st.trackTimeline
+        }));
+      } catch (e) {}
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     intervalRef.current = setInterval(tick, 200);
-    return () => clearInterval(intervalRef.current);
+    return () => {
+      clearInterval(intervalRef.current);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
   }, []);
 }
 
@@ -341,10 +369,27 @@ async function handleTrainArrival(
     const mlResult = await predictAssignment(
       station, train, freshOccupancy, mlEndpoint
     );
-    result     = { track_id: mlResult.track_id, platform_id: mlResult.platform_id };
-    source     = 'ml';
-    confidence = mlResult.confidence;
-    responseMs = mlResult.responseMs;
+    
+    // Validate ML result
+    let isValid = true;
+    const tid = String(mlResult.track_id);
+    const existingOcc = freshOccupancy[tid];
+    if (existingOcc && existingOcc.until > simTime) {
+      isValid = false; // Occupancy conflict
+    }
+    if (!train.train_pass_through && !mlResult.platform_id) {
+      isValid = false; // Dwelling train MUST have a platform
+    }
+    if (maintenanceTracks.has(tid) || disabledTracks.has(tid)) {
+      isValid = false; // Maintenance/Disabled track
+    }
+
+    if (isValid) {
+      result     = { track_id: mlResult.track_id, platform_id: mlResult.platform_id };
+      source     = 'ml';
+      confidence = mlResult.confidence;
+      responseMs = mlResult.responseMs;
+    }
     setMlStatus('connected');
   } catch (_) {
     setMlStatus('fallback');

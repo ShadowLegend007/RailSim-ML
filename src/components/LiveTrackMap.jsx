@@ -415,7 +415,7 @@ export default function LiveTrackMap() {
 
         {/* Platforms (Thick Brown Blocks) */}
         {platforms.map((plat) => {
-          const platTrackIdxs = (plat.track_id || []).map(tid => tracks.findIndex(t => t.id === tid)).filter(idx => idx >= 0);
+          const platTrackIdxs = (plat.track_id || []).map(tid => tracks.findIndex(t => String(t.id) === String(tid))).filter(idx => idx >= 0);
           if (platTrackIdxs.length === 0) return null;
 
           const ySum = platTrackIdxs.reduce((sum, idx) => sum + trackY(idx), 0);
@@ -603,7 +603,7 @@ export default function LiveTrackMap() {
         {activeTrains.map(train => {
           const trackId = train._assignedTrack;
           if (trackId == null) return null;
-          const track = tracks.find(t => t.id === trackId);
+          const track = tracks.find(t => String(t.id) === String(trackId) || String(t.track_id) === String(trackId));
           if (!track) return null;
 
           const idx = tracks.indexOf(track);

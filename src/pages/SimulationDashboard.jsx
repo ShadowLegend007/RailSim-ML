@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useSimStore } from '../store/useSimStore';
 import { useSimulationLoop } from '../hooks/useSimulationLoop';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { RDM_STATION_DATA } from '../data/mockData';
 import { generateInitialBatch } from '../utils/trainGenerator';
 import TopBar from '../components/TopBar';
 import LiveTrackMap from '../components/LiveTrackMap';
@@ -127,9 +126,10 @@ export default function SimulationDashboard() {
       try {
         const session = JSON.parse(sessionStorage.getItem('railsim_session') || '{}');
         if (session.simStarted) {
-          // Re-load the default sample station
-          const restoredStation = RDM_STATION_DATA.station;
-          setStation(restoredStation);
+          // Re-load the session station
+          if (session.station) {
+            setStation(session.station);
+          }
           
           // Only generate an initial batch if the session didn't have saved trains
           if (!session.fullTrains || session.fullTrains.queue.length === 0 && session.fullTrains.active.length === 0 && session.fullTrains.departed.length === 0) {

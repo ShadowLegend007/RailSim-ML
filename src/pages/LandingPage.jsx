@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSimStore } from '../store/useSimStore';
-import { SAMPLE_STATIONS } from '../data/mockData';
+import { generateRandomStation } from '../utils/stationGenerator';
 import { generateInitialBatch } from '../utils/trainGenerator';
 
 // ─── Animated Train SVG ───────────────────────────────────────────────────────
@@ -124,9 +124,7 @@ export default function LandingPage() {
   const [sampleLabel, setSampleLabel] = React.useState('Click Load Sample Station to test random layouts');
   
   const loadSampleStation = () => {
-    const currentIndex = SAMPLE_STATIONS.findIndex(s => s.station.metadata.name === station?.metadata.name);
-    const nextIndex = (currentIndex + 1) % SAMPLE_STATIONS.length;
-    const data = SAMPLE_STATIONS[nextIndex];
+    const data = generateRandomStation();
     const newStation = data.station;
     
     const trackCount = Object.keys(newStation.tracks || {}).length;

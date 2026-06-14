@@ -7,6 +7,7 @@ const SESSION_KEY = 'railsim_session';
 function saveSession(partial) {
   try {
     const prev = JSON.parse(sessionStorage.getItem(SESSION_KEY) || '{}');
+    // Don't overwrite station if not provided in partial, keep existing
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...prev, ...partial }));
   } catch {}
 }
@@ -44,6 +45,7 @@ export const useSimStore = create((set, get) => ({
   station: null,            // full station object from builder or sample
   setStation: (station) => set((state) => {
     const hasExistingOcc = Object.keys(state.trackOccupancy || {}).length > 0;
+    saveSession({ station });
     return {
       station,
       trackOccupancy: hasExistingOcc ? state.trackOccupancy : emptyOccupancy(station?.tracks),
@@ -234,7 +236,28 @@ export const useSimStore = create((set, get) => ({
   // Stop and clear session (called by Exit button only)
   exitSimulation: () => {
     clearSession();
-    set({ simStarted: false, paused: true, simTime: 0 });
+    set({
+      simStarted: false,
+      paused: true,
+      simTime: 0,
+      station: null,
+      trains: { queue: [], active: [], departed: [] },
+      trackOccupancy: {},
+      trackTimeline: {},
+      signalStates: {},
+      overstayAlerts: [],
+      maintenanceTracks: new Set(),
+      disabledTracks: new Set(),
+      conflicts: [],
+      eventLog: [],
+      toasts: [],
+      heatmapHistory: [],
+      metrics: {
+        occupancyPct: 0, conflictCount: 0, conflictsResolved: 0,
+        trainsHandled: 0, avgDwellTime: 0, totalDwellTime: 0,
+        dwellSamples: 0, mlDecisions: 0, overriddenDecisions: 0,
+      },
+    });
   },
 
   // ── Simulation Tick (called by the loop) ─────────────────────────────────
@@ -364,7 +387,9 @@ export const useSimStore = create((set, get) => ({
     if (!train) return {};
 
     const now = state.simTime;
-    const departureSimTime = now + (train.train_platform_duration || 10);
+    const rawDur = train.train_platform_duration;
+    const durMins = (typeof rawDur === 'string') ? (parseInt(rawDur) || 10) : (rawDur || 10);
+    const departureSimTime = now + durMins;
 
     const newOcc = { ...state.trackOccupancy };
     newOcc[String(trackId)] = { trainNo, since: now, until: departureSimTime };
