@@ -64,3 +64,78 @@ export const RDM_STATION_DATA = {
     }
   }
 };
+
+export const CITY_STATION_DATA = {
+  "station": {
+    "metadata": {
+      "name": "City Terminal",
+      "station_code": "CTY",
+      "division": "CTY",
+      "station_type": "Terminal",
+      "carshade": false,
+      "water_filling": true,
+      "track": 4,
+      "terminate_terminal_line": true,
+      "freight_line": false,
+      "platform": 4,
+      "terminal_track": 4
+    },
+    "tracks": {
+      "0": { "id": 0, "type": "terminal_line", "direction": "up", "associated_platform": ["platform1"], "train_type": ["passenger","superfast"], "speed_limit": "80 kmph", "water_filling": true, "terminal": true, "carshade": false, "goods_train_termination": false, "passthrough": false, "goods_train_stop": false, "line_capacity": "Category A", "junction_point": false, "carshade_line": false },
+      "1": { "id": 1, "type": "terminal_line", "direction": "up", "associated_platform": ["platform2"], "train_type": ["passenger","superfast"], "speed_limit": "80 kmph", "water_filling": true, "terminal": true, "carshade": false, "goods_train_termination": false, "passthrough": false, "goods_train_stop": false, "line_capacity": "Category A", "junction_point": false, "carshade_line": false },
+      "2": { "id": 2, "type": "terminal_line", "direction": "down", "associated_platform": ["platform3"], "train_type": ["passenger","superfast"], "speed_limit": "80 kmph", "water_filling": true, "terminal": true, "carshade": false, "goods_train_termination": false, "passthrough": false, "goods_train_stop": false, "line_capacity": "Category A", "junction_point": false, "carshade_line": false },
+      "3": { "id": 3, "type": "terminal_line", "direction": "down", "associated_platform": ["platform4"], "train_type": ["passenger","superfast"], "speed_limit": "80 kmph", "water_filling": true, "terminal": true, "carshade": false, "goods_train_termination": false, "passthrough": false, "goods_train_stop": false, "line_capacity": "Category A", "junction_point": false, "carshade_line": false }
+    },
+    "signals": {
+      "L0": { "position_from_station": "1000 m", "associated_track": 0, "signal_direction": "up", "signal_type": "main" },
+      "L1": { "position_from_station": "1000 m", "associated_track": 1, "signal_direction": "up", "signal_type": "main" },
+      "L2": { "position_from_station": "1000 m", "associated_track": 2, "signal_direction": "down", "signal_type": "main" },
+      "L3": { "position_from_station": "1000 m", "associated_track": 3, "signal_direction": "down", "signal_type": "main" }
+    },
+    "platforms": {
+      "platform1": { "id": "platform1", "platform_length": "600 m", "train_types": ["passenger","superfast"], "train_length": "24 coaches", "electrified": true, "track_id": [0], "termination": true, "goods_train_termination": false, "max_waiting_period": "30 minute", "water_filling": true, "platform_type": "terminal", "passenger_density": "high", "junction_point": false },
+      "platform2": { "id": "platform2", "platform_length": "600 m", "train_types": ["passenger","superfast"], "train_length": "24 coaches", "electrified": true, "track_id": [1], "termination": true, "goods_train_termination": false, "max_waiting_period": "30 minute", "water_filling": true, "platform_type": "terminal", "passenger_density": "high", "junction_point": false },
+      "platform3": { "id": "platform3", "platform_length": "600 m", "train_types": ["passenger","superfast"], "train_length": "24 coaches", "electrified": true, "track_id": [2], "termination": true, "goods_train_termination": false, "max_waiting_period": "30 minute", "water_filling": true, "platform_type": "terminal", "passenger_density": "high", "junction_point": false },
+      "platform4": { "id": "platform4", "platform_length": "600 m", "train_types": ["passenger","superfast"], "train_length": "24 coaches", "electrified": true, "track_id": [3], "termination": true, "goods_train_termination": false, "max_waiting_period": "30 minute", "water_filling": true, "platform_type": "terminal", "passenger_density": "high", "junction_point": false }
+    },
+    "line_crossings": {}
+  }
+};
+
+export const RURAL_STATION_DATA = {
+  "station": {
+    "metadata": {
+      "name": "Rural Stop",
+      "station_code": "RRL",
+      "division": "RRL",
+      "station_type": "Passthrough",
+      "carshade": false,
+      "water_filling": false,
+      "track": 3,
+      "terminate_terminal_line": false,
+      "freight_line": true,
+      "platform": 2,
+      "terminal_track": 0
+    },
+    "tracks": {
+      "0": { "id": 0, "type": "main_line", "direction": "up", "associated_platform": ["platform1"], "train_type": ["passenger","goods"], "speed_limit": "100 kmph", "water_filling": false, "terminal": false, "carshade": false, "goods_train_termination": false, "passthrough": true, "goods_train_stop": false, "line_capacity": "Category C", "junction_point": false, "carshade_line": false },
+      "1": { "id": 1, "type": "main_line", "direction": "down", "associated_platform": ["platform2"], "train_type": ["passenger","goods"], "speed_limit": "100 kmph", "water_filling": false, "terminal": false, "carshade": false, "goods_train_termination": false, "passthrough": true, "goods_train_stop": false, "line_capacity": "Category C", "junction_point": false, "carshade_line": false },
+      "2": { "id": 2, "type": "loop_line", "direction": "both", "associated_platform": [], "train_type": ["goods"], "speed_limit": "60 kmph", "water_filling": false, "terminal": false, "carshade": false, "goods_train_termination": false, "passthrough": true, "goods_train_stop": true, "line_capacity": "Category C", "junction_point": false, "carshade_line": false }
+    },
+    "signals": {
+      "L0": { "position_from_station": "1200 m", "associated_track": 0, "signal_direction": "up", "signal_type": "main" },
+      "L1": { "position_from_station": "1200 m", "associated_track": 1, "signal_direction": "down", "signal_type": "main" }
+    },
+    "platforms": {
+      "platform1": { "id": "platform1", "platform_length": "400 m", "train_types": ["passenger"], "train_length": "12 coaches", "electrified": false, "track_id": [0], "termination": false, "goods_train_termination": false, "max_waiting_period": "10 minute", "water_filling": false, "platform_type": "passthrough", "passenger_density": "low", "junction_point": false },
+      "platform2": { "id": "platform2", "platform_length": "400 m", "train_types": ["passenger"], "train_length": "12 coaches", "electrified": false, "track_id": [1], "termination": false, "goods_train_termination": false, "max_waiting_period": "10 minute", "water_filling": false, "platform_type": "passthrough", "passenger_density": "low", "junction_point": false }
+    },
+    "line_crossings": {}
+  }
+};
+
+export const SAMPLE_STATIONS = [
+  RDM_STATION_DATA,
+  CITY_STATION_DATA,
+  RURAL_STATION_DATA
+];

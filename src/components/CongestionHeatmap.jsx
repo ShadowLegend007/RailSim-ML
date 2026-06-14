@@ -11,7 +11,7 @@ function heatColor(ratio) {
 }
 
 export default function CongestionHeatmap() {
-  const { station, heatmapHistory, trackOccupancy } = useSimStore();
+  const { station, heatmapHistory, trains, simTime } = useSimStore();
 
   if (!station) return null;
 
@@ -20,6 +20,18 @@ export default function CongestionHeatmap() {
   const CELL_W = history.length > 0 ? Math.max(4, Math.floor(260 / history.length)) : 8;
   const CELL_H = 10;
   const LABEL_W = 32;
+
+  const activeTrains = trains.active || [];
+  const isTrackPhysicallyOccupied = (trackId) => {
+    return activeTrains.some(train => {
+      if (String(train._assignedTrack) !== String(trackId)) return false;
+      const duration = train.train_platform_duration ? parseInt(train.train_platform_duration) : 10;
+      const totalTransitTime = duration + 10;
+      const timeSinceSpawn = simTime - ((train._arrivedAt || simTime) - 5);
+      const progress = timeSinceSpawn / totalTransitTime;
+      return progress >= 0 && progress <= 1;
+    });
+  };
 
   // Current occupancy for live bar
   return (
@@ -39,7 +51,7 @@ export default function CongestionHeatmap() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }} className="scroll-dark">
         {tracks.map((track) => {
           const tid = String(track.id);
-          const currentOcc = trackOccupancy[tid] ? 1 : 0;
+          const currentOcc = isTrackPhysicallyOccupied(track.id) ? 1 : 0;
           const liveColor = currentOcc ? '#EF4444' : '#22C55E';
 
           return (
@@ -74,8 +86,7 @@ export default function CongestionHeatmap() {
               {/* History cells */}
               <svg width={history.length * CELL_W} height={CELL_H}>
                 {history.map((snap, i) => {
-                  const val = snap.perTrack[tid] || 0;
-                  const ratio = val;
+                  const ratio = snap.perTrack[tid] || 0;
                   return (
                     <rect
                       key={i}

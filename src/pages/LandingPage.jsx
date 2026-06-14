@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSimStore } from '../store/useSimStore';
-import { RDM_STATION_DATA } from '../data/mockData';
+import { SAMPLE_STATIONS } from '../data/mockData';
 import { generateInitialBatch } from '../utils/trainGenerator';
 
 // ─── Animated Train SVG ───────────────────────────────────────────────────────
@@ -119,11 +119,22 @@ function LiveClock() {
 // ─── LandingPage ──────────────────────────────────────────────────────────────
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { setStation, enqueueTrains, startSimulation } = useSimStore();
+  const { station, setStation, enqueueTrains, startSimulation } = useSimStore();
 
+  const [sampleLabel, setSampleLabel] = React.useState('Click Load Sample Station to test random layouts');
+  
   const loadSampleStation = () => {
-    const station = RDM_STATION_DATA.station;
-    setStation(station);
+    const currentIndex = SAMPLE_STATIONS.findIndex(s => s.station.metadata.name === station?.metadata.name);
+    const nextIndex = (currentIndex + 1) % SAMPLE_STATIONS.length;
+    const data = SAMPLE_STATIONS[nextIndex];
+    const newStation = data.station;
+    
+    const trackCount = Object.keys(newStation.tracks || {}).length;
+    const platformCount = Object.keys(newStation.platforms || {}).length;
+    const crossingCount = Object.keys(newStation.line_crossings || {}).length;
+    setSampleLabel(`Sample: ${newStation.metadata.name} · ${trackCount} Tracks · ${platformCount} Platforms`);
+    
+    setStation(newStation);
     const initialTrains = generateInitialBatch('basic', 20);
     enqueueTrains(initialTrains);
     startSimulation();
@@ -271,7 +282,7 @@ export default function LandingPage() {
           fontSize: '0.75rem',
           fontFamily: "'JetBrains Mono', monospace",
         }}>
-          Sample: RDM Junction · 10 Tracks · 8 Platforms · 27 Crossings
+          {sampleLabel}
         </p>
       </div>
 

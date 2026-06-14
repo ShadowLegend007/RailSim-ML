@@ -142,6 +142,18 @@ export default function LiveTrackMap() {
     showSignals, showCrossings, setSelectedElement,
   } = useSimStore();
 
+  const activeTrains = trains.active || [];
+  const isTrackPhysicallyOccupied = (trackId) => {
+    return activeTrains.some(train => {
+      if (String(train._assignedTrack) !== String(trackId)) return false;
+      const duration = train.train_platform_duration ? parseInt(train.train_platform_duration) : 10;
+      const totalTransitTime = duration + 10;
+      const timeSinceSpawn = simTime - ((train._arrivedAt || simTime) - 5);
+      const progress = timeSinceSpawn / totalTransitTime;
+      return progress >= 0 && progress <= 1;
+    });
+  };
+
   const [tooltip, setTooltip]   = useState(null); // { x, y, data }
   const [controls, setControls] = useState(null); // { trackId, x, y }
   const [zoomLevel, setZoomLevel] = useState(1.0); // 0.5 = zoomed in, 2.0 = zoomed out
@@ -297,10 +309,10 @@ export default function LiveTrackMap() {
   }, []);
 
   // Train segments calculator (Engine + 2 Coaches)
-  const getTrainSegments = useCallback((p, track, idx) => {
+  const getTrainSegments = useCallback((p, track, idx, train) => {
     let x = 500;
     const isTerminal = track.type === 'terminal_line';
-    const dir = getTrainDir({ train_no: '0' }, track); // dummy for track base direction
+    const trainDir = train ? getTrainDir(train, track) : getTrainDir({ train_no: '0' }, track);
 
     if (isTerminal) {
       if (p <= 0.48) {
@@ -311,7 +323,6 @@ export default function LiveTrackMap() {
         x = 500 - t * 500;
       }
     } else {
-      const trainDir = getTrainDir({ train_no: '0' }, track);
       if (trainDir === 'up') {
         if (p <= 0.48) {
           const t = p / 0.48;
@@ -331,7 +342,7 @@ export default function LiveTrackMap() {
       }
     }
 
-    const isMovingLeft = isTerminal ? (p > 0.48) : (dir === 'up');
+    const isMovingLeft = isTerminal ? (p > 0.48) : (trainDir === 'up');
     const offset1 = isMovingLeft ? 24 : -24;
     const offset2 = isMovingLeft ? 44 : -44;
 
@@ -346,8 +357,6 @@ export default function LiveTrackMap() {
       isMovingLeft,
     };
   }, [getTrainDir, getPathXY]);
-
-  const activeTrains = trains.active || [];
 
   return (
     <div
@@ -437,12 +446,13 @@ export default function LiveTrackMap() {
           const mlY = findClosestMainLineY(yVal);
           const isMaint = maintenanceTracks.has(String(track.id));
           const isDisabled = disabledTracks.has(String(track.id));
-          const occ = trackOccupancy[String(track.id)];
+          const occ = isTrackPhysicallyOccupied(track.id);
           const pathD = getTrackPath(track, idx);
 
           let strokeColor = trackColor(track.type);
           if (isDisabled) strokeColor = '#94A3B8';
           else if (isMaint) strokeColor = '#D97706';
+          else if (occ) strokeColor = '#EF4444'; // Red for occupied
 
           const statusColor = isDisabled ? '#94A3B8'
             : isMaint   ? '#D97706'
@@ -455,9 +465,10 @@ export default function LiveTrackMap() {
               <path
                 d={pathD}
                 fill="none"
-                stroke="#E2E8F0"
-                strokeWidth="6"
+                stroke={occ ? "rgba(239, 68, 68, 0.2)" : "#E2E8F0"}
+                strokeWidth={occ ? "12" : "6"}
                 strokeLinecap="round"
+                style={{ transition: 'all 0.3s ease' }}
               />
 
               {/* Rails (Colored overlay line) */}
@@ -468,6 +479,7 @@ export default function LiveTrackMap() {
                 strokeWidth="2"
                 strokeDasharray={track.type === 'main_line' ? 'none' : '8 4'}
                 strokeLinecap="round"
+                style={{ transition: 'stroke 0.3s ease' }}
               />
 
               {/* Bumper Block for Terminal Lines */}
@@ -601,7 +613,7 @@ export default function LiveTrackMap() {
           // No clamping, allow p < 0 for smooth sliding in
 
           const dir = getTrainDir(train, track);
-          const segments = getTrainSegments(p, track, idx);
+          const segments = getTrainSegments(p, track, idx, train);
           const color = trainFill(train);
 
           // Calculate track angle based on engine position

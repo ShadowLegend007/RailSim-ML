@@ -277,11 +277,19 @@ export function useSimulationLoop() {
       }
 
       // ── Heatmap snapshot ───────────────────────────────────────────────────
-      const { trackOccupancy: occ2, station: stn2 } = useSimStore.getState();
+      const { trackOccupancy: occ2, station: stn2, conflicts, trains: simTrains } = useSimStore.getState();
       if (stn2) {
         const perTrack = {};
         Object.keys(stn2.tracks || {}).forEach(tid => {
-          perTrack[tid] = occ2[tid] ? 1 : 0;
+          let score = occ2[tid] ? 0.3 : 0;
+          const trackConflicts = conflicts.filter(c => !c.resolved && String(c.trackId) === tid);
+          const activeOnTrack = simTrains.active.filter(t => String(t._assignedTrack) === tid).length;
+          
+          if (activeOnTrack >= 2) score = Math.max(score, 0.7);
+          if (activeOnTrack >= 3) score = Math.max(score, 0.9);
+          if (trackConflicts.length > 0) score = 1.0;
+          
+          perTrack[tid] = score;
         });
         useSimStore.getState().pushHeatmapSnapshot({
           simMin: Math.floor(newSimTime), perTrack,
@@ -406,7 +414,19 @@ async function handleTrainArrival(
       'conflict'
     );
     addToast(`Conflict on Track ${result.track_id}`, 'error');
+    
+    // Push the train 5 minutes into the future (based on current simTime) to avoid spamming
+    useSimStore.setState(prev => ({
+      trains: {
+        ...prev.trains,
+        queue: prev.trains.queue.map(t => 
+          t.train_no === train.train_no ? { ...t, _arrivalSimMin: simTime + 5 } : t
+        )
+      }
+    }));
+
     if (autoPauseOnConflict) setPaused(true);
+    return;
   }
 
   assignTrain(
