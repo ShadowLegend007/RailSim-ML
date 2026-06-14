@@ -21,15 +21,16 @@ function MetricsBar() {
   const { metrics, conflicts, trains } = useSimStore();
   const active = trains.active?.length || 0;
   const departed = trains.departed?.length || 0;
-  const unresolved = conflicts.filter(c => !c.resolved).length;
+  const queueTrainNos = new Set((trains.queue || []).map(t => t.train_no));
+  const futureConflicts = conflicts.filter(c => !c.resolved && queueTrainNos.has(c.trainNo)).length;
 
   const items = [
-    { label: 'Active',      value: active,                    color: '#3B82F6' },
-    { label: 'Departed',    value: departed,                  color: '#22C55E' },
-    { label: 'Occupancy',   value: `${metrics.occupancyPct}%`, color: metrics.occupancyPct > 80 ? '#EF4444' : '#F59E0B' },
-    { label: 'Conflicts',   value: unresolved,                color: unresolved > 0 ? '#EF4444' : '#22C55E' },
-    { label: 'Avg Dwell',   value: `${metrics.avgDwellTime || 0}m`, color: '#64748B' },
-    { label: 'Throughput',  value: metrics.trainsHandled,     color: '#22C55E' },
+    { label: 'Active',           value: active,                    color: '#3B82F6' },
+    { label: 'Departed',         value: departed,                  color: '#22C55E' },
+    { label: 'Occupancy',        value: `${metrics.occupancyPct}%`, color: metrics.occupancyPct > 80 ? '#EF4444' : '#F59E0B' },
+    { label: 'Future Conflicts', value: futureConflicts,           color: futureConflicts > 0 ? '#EF4444' : '#22C55E' },
+    { label: 'Solved Conflicts', value: metrics.conflictsResolved, color: '#22C55E' },
+    { label: 'Throughput',       value: metrics.trainsHandled,     color: '#22C55E' },
   ];
 
   return (

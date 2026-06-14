@@ -93,26 +93,35 @@ export function useSimulationLoop() {
         nextSpawnRef.current = null;
       }
 
-      // ── Process at most ONE arriving train per tick ──────────────────────
-      // This prevents stale-occupancy conflicts when many trains pile up.
+      // ── Process at most ONE pre-allocation or arrival per tick ─────────────
       // Re-read fresh state after each store mutation.
       if (!isProcessingArrivalRef.current) {
         const freshState = useSimStore.getState();
-        const firstArriving = freshState.trains.queue
-          .filter(t => t._arrivalSimMin <= newSimTime)
-          .sort((a, b) => (a._arrivalSimMin - b._arrivalSimMin) || (a.isSpecial ? -1 : 1))[0];
 
-        if (firstArriving) {
-          const { station, trackOccupancy, trackTimeline, maintenanceTracks,
-                  disabledTracks, mlEndpoint } = useSimStore.getState();
-          isProcessingArrivalRef.current = true;
-          // Run asynchronously so physics engine doesn't block on ML requests
-          handleTrainArrival(
-            firstArriving, station, trackOccupancy, trackTimeline,
-            maintenanceTracks, disabledTracks, newSimTime, mlEndpoint
-          ).finally(() => {
-            isProcessingArrivalRef.current = false;
-          });
+        // 1. Physical Arrival: If a pre-assigned train's time has come, activate it immediately.
+        const readyToArrive = freshState.trains.queue
+          .find(t => t._preAssignedTrack && t._arrivalSimMin <= newSimTime);
+
+        if (readyToArrive) {
+          useSimStore.getState().activatePreAssignedTrain(readyToArrive.train_no);
+        } else {
+          // 2. Pre-allocation: Look ahead 60 minutes for unassigned trains.
+          const firstArriving = freshState.trains.queue
+            .filter(t => !t._preAssignedTrack && t._arrivalSimMin <= newSimTime + 60)
+            .sort((a, b) => (a._arrivalSimMin - b._arrivalSimMin) || (a.isSpecial ? -1 : 1))[0];
+
+          if (firstArriving) {
+            const { station, trackOccupancy, trackTimeline, maintenanceTracks,
+                    disabledTracks, mlEndpoint } = useSimStore.getState();
+            isProcessingArrivalRef.current = true;
+            // Run asynchronously so physics engine doesn't block on ML requests
+            handleTrainArrival(
+              firstArriving, station, trackOccupancy, trackTimeline,
+              maintenanceTracks, disabledTracks, newSimTime, mlEndpoint
+            ).finally(() => {
+              isProcessingArrivalRef.current = false;
+            });
+          }
         }
       }
 
@@ -303,8 +312,13 @@ export function useSimulationLoop() {
       }
 
       if (newSimTime >= nextSpawnRef.current) {
-        const newTrain = generateTrain(rushLevel, newSimTime, 0);
-        useSimStore.getState().enqueueTrains([newTrain]);
+        // Limit queue size to prevent infinite conflict accumulation when station is overloaded
+        const currentQueue = useSimStore.getState().trains.queue;
+        if (currentQueue.length < 20) {
+          const newTrain = generateTrain(rushLevel, newSimTime, 0);
+          useSimStore.getState().enqueueTrains([newTrain]);
+        }
+        
         const interval = getSpawnInterval(rushLevel);
         nextSpawnRef.current = Math.floor(newSimTime) + interval.min +
           Math.floor(Math.random() * (interval.max - interval.min));
@@ -403,7 +417,7 @@ async function handleTrainArrival(
     let isValid = true;
     const tid = String(mlResult.track_id);
     const existingOcc = freshOccupancy[tid];
-    if (existingOcc && existingOcc.until > simTime) {
+    if (existingOcc && existingOcc.until > Math.max(simTime, train._arrivalSimMin || simTime)) {
       isValid = false; // Occupancy conflict
     }
     if (!train.train_pass_through && !mlResult.platform_id) {
@@ -447,6 +461,10 @@ async function handleTrainArrival(
   }
 
   if (!result) {
+    const isNew = !useSimStore.getState().conflicts.some(c => 
+      !c.resolved && c.trainNo === train.train_no && c.type === 'no_track'
+    );
+
     addConflict({
       type:      'no_track',
       trainNo:   train.train_no,
@@ -454,8 +472,11 @@ async function handleTrainArrival(
       simTime,
       message: `No compatible track for ${train.train_no} at ${Math.floor(simTime)} min`,
     });
-    addEvent(`CONFLICT: No compatible track for ${train.train_no}`, 'conflict');
-    addToast(`${train.train_no} has no compatible track`, 'error');
+    
+    if (isNew) {
+      addEvent(`CONFLICT: No compatible track for ${train.train_no}`, 'conflict');
+      addToast(`${train.train_no} has no compatible track`, 'error');
+    }
     
     // Push the train 5 minutes into the future (based on current simTime) to avoid spamming
     useSimStore.setState(prev => ({
@@ -474,7 +495,11 @@ async function handleTrainArrival(
   // Check occupancy conflict using the freshest state
   const finalOccupancy = useSimStore.getState().trackOccupancy;
   const existingOcc    = finalOccupancy[String(result.track_id)];
-  if (existingOcc && existingOcc.until > simTime) {
+  if (existingOcc && existingOcc.until > Math.max(simTime, train._arrivalSimMin || simTime)) {
+    const isNew = !useSimStore.getState().conflicts.some(c => 
+      !c.resolved && c.trainNo === train.train_no && c.type === 'occupancy'
+    );
+
     addConflict({
       type:               'occupancy',
       trainNo:            train.train_no,
@@ -483,11 +508,14 @@ async function handleTrainArrival(
       simTime,
       message: `${train.train_no} & ${existingOcc.trainNo} both on Track ${result.track_id}`,
     });
-    addEvent(
-      `CONFLICT: ${train.train_no} & ${existingOcc.trainNo} on Track ${result.track_id}`,
-      'conflict'
-    );
-    addToast(`Conflict on Track ${result.track_id}`, 'error');
+    
+    if (isNew) {
+      addEvent(
+        `CONFLICT: ${train.train_no} & ${existingOcc.trainNo} on Track ${result.track_id}`,
+        'conflict'
+      );
+      addToast(`Conflict on Track ${result.track_id}`, 'error');
+    }
     
     // Push the train 5 minutes into the future (based on current simTime) to avoid spamming
     useSimStore.setState(prev => ({
@@ -503,14 +531,28 @@ async function handleTrainArrival(
     return;
   }
 
-  assignTrain(
-    train.train_no,
-    result.track_id,
-    result.platform_id,
-    source,
-    confidence,
-    responseMs,
-  );
+  // If train is in the future, pre-assign it. If it's already here, assign it directly.
+  const isFuture = train._arrivalSimMin > simTime;
+
+  if (isFuture) {
+    useSimStore.getState().preAssignTrain(
+      train.train_no,
+      result.track_id,
+      result.platform_id,
+      source,
+      confidence,
+      responseMs
+    );
+  } else {
+    assignTrain(
+      train.train_no,
+      result.track_id,
+      result.platform_id,
+      source,
+      confidence,
+      responseMs
+    );
+  }
 
   // Advanced Allocation Side-effects (Rules 8 & 28)
   if (result.method === 'advanced') {

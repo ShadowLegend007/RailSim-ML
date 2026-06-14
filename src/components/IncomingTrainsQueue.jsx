@@ -107,6 +107,21 @@ function TrainCard({ train, onClick }) {
           {train.water_filling ? ' [W]' : ''}
         </span>
       </div>
+      {train._preAssignedTrack && (
+        <div style={{ marginTop: '4px' }}>
+          <span style={{
+            color: '#047857',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '0.65rem',
+            fontWeight: 600,
+            background: 'rgba(16, 185, 129, 0.1)',
+            padding: '2px 6px',
+            borderRadius: '3px'
+          }}>
+            PRE-ASSIGNED: T{train._preAssignedTrack}
+          </span>
+        </div>
+      )}
       {train.delay_mins > 0 && (
         <div style={{ marginTop: '4px' }}>
           <span style={{

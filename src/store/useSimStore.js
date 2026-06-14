@@ -112,15 +112,26 @@ export const useSimStore = create((set, get) => ({
 
   // ── Conflicts ────────────────────────────────────────────────────────────
   conflicts: [],
-  addConflict: (conflict) => set((state) => ({
-    conflicts: [...state.conflicts, { ...conflict, id: generateId(), resolved: false }],
-    metrics: { ...state.metrics, conflictCount: state.metrics.conflictCount + 1 },
-  })),
+  addConflict: (conflict) => set((state) => {
+    const exists = state.conflicts.find(c => 
+      !c.resolved && c.trainNo === conflict.trainNo && c.type === conflict.type
+    );
+    if (exists) return state;
+
+    return {
+      conflicts: [...state.conflicts, { ...conflict, id: generateId(), resolved: false }],
+      metrics: { ...state.metrics, conflictCount: state.metrics.conflictCount + 1 },
+    };
+  }),
   resolveConflict: (conflictId) => set((state) => ({
     conflicts: state.conflicts.map(c =>
       c.id === conflictId ? { ...c, resolved: true } : c
     ),
-    metrics: { ...state.metrics, conflictsResolved: state.metrics.conflictsResolved + 1 },
+    metrics: { 
+      ...state.metrics, 
+      conflictsResolved: state.metrics.conflictsResolved + 1,
+      conflictCount: Math.max(0, state.metrics.conflictCount - 1)
+    },
   })),
 
   // ML Status
@@ -291,6 +302,15 @@ export const useSimStore = create((set, get) => ({
     const dwellTime = state.simTime - (train._arrivedAt || state.simTime);
     const newSamples = state.metrics.dwellSamples + 1;
     const newTotal = state.metrics.totalDwellTime + dwellTime;
+    let resolvedDelta = 0;
+    const newConflicts = state.conflicts.map(c => {
+      if (!c.resolved && (c.trainNo === trainNo || c.conflictingTrainNo === trainNo)) {
+        resolvedDelta++;
+        return { ...c, resolved: true };
+      }
+      return c;
+    });
+
     return {
       trains: {
         ...state.trains,
@@ -301,12 +321,15 @@ export const useSimStore = create((set, get) => ({
         ].slice(0, 50),
       },
       trackOccupancy: newOcc,
+      conflicts: newConflicts,
       metrics: {
         ...state.metrics,
         trainsHandled: state.metrics.trainsHandled + 1,
         totalDwellTime: newTotal,
         dwellSamples: newSamples,
         avgDwellTime: Math.round(newTotal / newSamples),
+        conflictsResolved: state.metrics.conflictsResolved + resolvedDelta,
+        conflictCount: Math.max(0, state.metrics.conflictCount - resolvedDelta),
       },
     };
   }),
@@ -370,14 +393,104 @@ export const useSimStore = create((set, get) => ({
     }
     oldOcc[String(newTrackId)] = { trainNo, since: state.simTime, until: train._departureAt };
 
+    let resolvedDelta = 0;
+    const newConflicts = state.conflicts.map(c => {
+      if (!c.resolved && (c.trainNo === trainNo || c.conflictingTrainNo === trainNo)) {
+        resolvedDelta++;
+        return { ...c, resolved: true };
+      }
+      return c;
+    });
+
     return {
       trackOccupancy: oldOcc,
+      conflicts: newConflicts,
+      metrics: {
+        ...state.metrics,
+        conflictsResolved: state.metrics.conflictsResolved + resolvedDelta,
+        conflictCount: Math.max(0, state.metrics.conflictCount - resolvedDelta),
+      },
       trains: {
         ...state.trains,
         active: state.trains.active.map(t => 
           t.train_no === trainNo ? { ...t, _assignedTrack: newTrackId, _assignedPlatform: null } : t
         ),
       }
+    };
+  }),
+
+  preAssignTrain: (trainNo, trackId, platformId, source, confidence, responseMs) => set((state) => {
+    const trains = state.trains;
+    const trainIndex = trains.queue.findIndex(t => t.train_no === trainNo);
+    if (trainIndex === -1) return {};
+
+    const train = trains.queue[trainIndex];
+    const updatedTrain = {
+      ...train,
+      _preAssignedTrack: trackId,
+      _preAssignedPlatform: platformId,
+      _assignedSource: source,
+      _confidence: confidence,
+      _responseMs: responseMs,
+    };
+
+    let resolvedDelta = 0;
+    const newConflicts = state.conflicts.map(c => {
+      if (!c.resolved && (c.trainNo === trainNo || c.conflictingTrainNo === trainNo)) {
+        resolvedDelta++;
+        return { ...c, resolved: true };
+      }
+      return c;
+    });
+
+    const newQueue = [...trains.queue];
+    newQueue[trainIndex] = updatedTrain;
+
+    return {
+      trains: { ...trains, queue: newQueue },
+      conflicts: newConflicts,
+      metrics: {
+        ...state.metrics,
+        mlDecisions: source === 'ml' ? state.metrics.mlDecisions + 1 : state.metrics.mlDecisions,
+        conflictsResolved: state.metrics.conflictsResolved + resolvedDelta,
+        conflictCount: Math.max(0, state.metrics.conflictCount - resolvedDelta),
+      }
+    };
+  }),
+
+  activatePreAssignedTrain: (trainNo) => set((state) => {
+    const trains = state.trains;
+    const train = trains.queue.find(t => t.train_no === trainNo);
+    if (!train || !train._preAssignedTrack) return {};
+
+    const now = state.simTime;
+    const rawDur = train.train_platform_duration;
+    const durMins = (typeof rawDur === 'string') ? (parseInt(rawDur) || 10) : (rawDur || 10);
+    const departureSimTime = now + durMins;
+
+    const newOcc = { ...state.trackOccupancy };
+    newOcc[String(train._preAssignedTrack)] = { trainNo, since: now, until: departureSimTime };
+
+    const tag = train._assignedSource === 'ml'
+      ? `[ML: ${train._responseMs}ms, conf: ${(train._confidence * 100).toFixed(0)}%]`
+      : '[FALLBACK]';
+    get().addEvent(`→ ${trainNo} → Track ${train._preAssignedTrack}, ${train._preAssignedPlatform}  ${tag}`, 'info');
+
+    const updatedTrain = {
+      ...train,
+      _assignedTrack: train._preAssignedTrack,
+      _assignedPlatform: train._preAssignedPlatform,
+      _arrivedAt: now,
+      _departureAt: departureSimTime,
+    };
+
+    return {
+      trains: {
+        ...trains,
+        queue: trains.queue.filter(t => t.train_no !== trainNo),
+        active: [...trains.active, updatedTrain],
+      },
+      trackOccupancy: newOcc,
     };
   }),
 
@@ -417,6 +530,15 @@ export const useSimStore = create((set, get) => ({
       _responseMs: responseMs,
     };
 
+    let resolvedDelta = 0;
+    const newConflicts = state.conflicts.map(c => {
+      if (!c.resolved && (c.trainNo === trainNo || c.conflictingTrainNo === trainNo)) {
+        resolvedDelta++;
+        return { ...c, resolved: true };
+      }
+      return c;
+    });
+
     return {
       trains: {
         ...trains,
@@ -424,11 +546,14 @@ export const useSimStore = create((set, get) => ({
         active: [...trains.active.filter(t => t.train_no !== trainNo), updatedTrain],
       },
       trackOccupancy: newOcc,
+      conflicts: newConflicts,
       metrics: {
         ...state.metrics,
         mlDecisions: source === 'ml'
           ? state.metrics.mlDecisions + 1
           : state.metrics.mlDecisions,
+        conflictsResolved: state.metrics.conflictsResolved + resolvedDelta,
+        conflictCount: Math.max(0, state.metrics.conflictCount - resolvedDelta),
       },
       eventLog: [
         {

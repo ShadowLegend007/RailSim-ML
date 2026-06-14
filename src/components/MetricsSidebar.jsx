@@ -118,8 +118,8 @@ export default function MetricsSidebar() {
         {/* Metrics */}
         <MetricRow label="Trains Handled"  value={trainsHandled}  unit="trains" color="#16A34A" />
         <MetricRow label="Avg Dwell Time"  value={avgDwellTime || 0}  unit="min" color="#2563EB" />
-        <MetricRow label="Conflicts Total" value={conflictCount}   unit=""      color="#DC2626" />
-        <MetricRow label="Conflicts Res."  value={conflictsResolved} unit=""    color="#16A34A" />
+        <MetricRow label="Future Conflicts" value={conflictCount}   unit=""      color="#DC2626" />
+        <MetricRow label="Solved Conflicts"  value={conflictsResolved} unit=""    color="#16A34A" />
         <MetricRow label="ML Decisions"    value={mlDecisions}    unit=""      color="#2563EB" />
         <MetricRow label="ML Accuracy"     value={mlAccuracy}     unit="%"     color={mlAccuracy > 90 ? '#16A34A' : '#D97706'} />
 
