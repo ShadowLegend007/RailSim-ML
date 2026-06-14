@@ -3,6 +3,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import StationBuilder from './pages/StationBuilder';
 import SimulationDashboard from './pages/SimulationDashboard';
+import ThankYou from './pages/ThankYou';
+
+import { generateInitialBatch } from './utils/trainGenerator';
+import { useSimStore } from './store/useSimStore';
+import { useSimulationLoop } from './hooks/useSimulationLoop';
 
 // ─── Screen Guard (min 1280px) ────────────────────────────────────────────────
 function ScreenGuard({ children }) {
@@ -60,15 +65,41 @@ function ScreenGuard({ children }) {
   return children;
 }
 
+// ─── Global Simulation Runner ─────────────────────────────────────────────────
+function GlobalSimulation() {
+  const { station, setStation, enqueueTrains } = useSimStore();
+  
+  useEffect(() => {
+    if (!station) {
+      try {
+        const session = JSON.parse(sessionStorage.getItem('railsim_session') || '{}');
+        if (session.simStarted) {
+          if (session.station) setStation(session.station);
+          if (!session.fullTrains || (session.fullTrains.queue.length === 0 && session.fullTrains.active.length === 0 && session.fullTrains.departed.length === 0)) {
+            const trains = generateInitialBatch(session.rushLevel || 'basic', 15, session.simTime || 0);
+            enqueueTrains(trains);
+          }
+        }
+      } catch {}
+    }
+  }, [station, setStation, enqueueTrains]);
+
+  useSimulationLoop();
+
+  return null;
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
   return (
     <ScreenGuard>
+      <GlobalSimulation />
       <BrowserRouter>
         <Routes>
           <Route path="/"        element={<LandingPage />} />
           <Route path="/builder" element={<StationBuilder />} />
           <Route path="/sim"     element={<SimulationDashboard />} />
+          <Route path="/thank-you" element={<ThankYou />} />
           <Route path="*"        element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

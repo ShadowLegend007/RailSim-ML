@@ -17,12 +17,14 @@ import trainAllocationService from '../services/trainAllocationService';
  *  - Only ONE train is processed per tick to avoid stale-state conflicts
  */
 export function useSimulationLoop() {
-  const intervalRef     = useRef(null);
-  const nextSpawnRef    = useRef(null);
-  const lastRushRef     = useRef(null);
-  const lastSaveRef     = useRef(Date.now());
-  const dataSnapshotRef = useRef([]);
-  const SESSION_KEY     = 'railsim_session';
+  const intervalRef            = useRef(null);
+  const nextSpawnRef           = useRef(null);
+  const lastRushRef            = useRef(null);
+  const lastSaveRef            = useRef(Date.now());
+  const lastTickRef            = useRef(Date.now());
+  const dataSnapshotRef        = useRef([]);
+  const isProcessingArrivalRef = useRef(false);
+  const SESSION_KEY            = 'railsim_session';
 
   useEffect(() => {
     const tick = async () => {
@@ -32,10 +34,19 @@ export function useSimulationLoop() {
 
       if (s.paused || !s.simStarted || !s.station) return;
 
+      // Determine real elapsed time since last tick
+      const nowMs = Date.now();
+      let elapsedSecs = (nowMs - lastTickRef.current) / 1000;
+      if (!lastTickRef.current) elapsedSecs = 0.2;
+      lastTickRef.current = nowMs;
+
+      // Cap at 1.0 second to prevent massive physics jumps after waking from sleep
+      const safeElapsedSecs = Math.min(elapsedSecs, 1.0);
+
       // s.speed is 1, 10, 30, 60 (real-time multiplier)
-      // 200ms tick = 0.2 seconds real-time.
-      // delta in minutes = (real_delta_seconds * speed_multiplier) / 60
-      const deltaSimMins = (0.2 * s.speed) / 60;
+      // At 1x speed, 1 real second = 1 sim minute. 
+      // 200ms tick = 0.2 real seconds = 0.2 sim minutes
+      const deltaSimMins = safeElapsedSecs * s.speed;
       const newSimTime   = s.simTime + deltaSimMins;
 
       // Advance clock
@@ -84,23 +95,29 @@ export function useSimulationLoop() {
       // ── Process at most ONE arriving train per tick ──────────────────────
       // This prevents stale-occupancy conflicts when many trains pile up.
       // Re-read fresh state after each store mutation.
-      const freshState = useSimStore.getState();
-      const firstArriving = freshState.trains.queue
-        .filter(t => t._arrivalSimMin <= newSimTime)
-        .sort((a, b) => (a._arrivalSimMin - b._arrivalSimMin) || (a.isSpecial ? -1 : 1))[0];
+      if (!isProcessingArrivalRef.current) {
+        const freshState = useSimStore.getState();
+        const firstArriving = freshState.trains.queue
+          .filter(t => t._arrivalSimMin <= newSimTime)
+          .sort((a, b) => (a._arrivalSimMin - b._arrivalSimMin) || (a.isSpecial ? -1 : 1))[0];
 
-      if (firstArriving) {
-        const { station, trackOccupancy, trackTimeline, maintenanceTracks,
-                disabledTracks, mlEndpoint } = useSimStore.getState();
-        await handleTrainArrival(
-          firstArriving, station, trackOccupancy, trackTimeline,
-          maintenanceTracks, disabledTracks, newSimTime, mlEndpoint
-        );
+        if (firstArriving) {
+          const { station, trackOccupancy, trackTimeline, maintenanceTracks,
+                  disabledTracks, mlEndpoint } = useSimStore.getState();
+          isProcessingArrivalRef.current = true;
+          // Run asynchronously so physics engine doesn't block on ML requests
+          handleTrainArrival(
+            firstArriving, station, trackOccupancy, trackTimeline,
+            maintenanceTracks, disabledTracks, newSimTime, mlEndpoint
+          ).finally(() => {
+            isProcessingArrivalRef.current = false;
+          });
+        }
       }
 
       // ── Rule 15: Overstay monitoring ───────────────────────────────────────
-      if (freshState.station && freshState.station.platforms && Math.floor(newSimTime) > Math.floor(s.simTime)) {
-        const overstays = trainAllocationService.checkOverstayingTrains(freshState.trains.active, freshState.station.platforms, newSimTime);
+      if (useSimStore.getState().station && useSimStore.getState().station.platforms && Math.floor(newSimTime) > Math.floor(s.simTime)) {
+        const overstays = trainAllocationService.checkOverstayingTrains(useSimStore.getState().trains.active, useSimStore.getState().station.platforms, newSimTime);
         if (overstays.length > 0) {
            useSimStore.getState().addOverstayAlerts(overstays);
            overstays.forEach(o => {
@@ -110,9 +127,10 @@ export function useSimulationLoop() {
         }
       }
 
-      // ── Physics Engine (Kinematics Step) ───────────────────────────────────
+      // Physics Engine (Kinematics Step)
       // dt_seconds is the amount of physical seconds that passed in this tick
-      const dt_seconds = 0.2 * s.speed; 
+      // Since deltaSimMins is in minutes, physical seconds is deltaSimMins * 60
+      const dt_seconds = deltaSimMins * 60;
       const activeTrains = useSimStore.getState().trains.active;
       let departedTrainNos = [];
 

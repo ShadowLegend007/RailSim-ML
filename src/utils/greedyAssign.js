@@ -108,7 +108,10 @@ export function greedyAssign(
         station,
         trackTimeline,
         {},
-        simTime
+        simTime,
+        null, // currentDay
+        maintenanceTracks,
+        disabledTracks
       );
 
       if (!advancedResult.error) {

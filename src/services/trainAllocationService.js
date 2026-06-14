@@ -564,14 +564,23 @@ export function allocateTrainAdvanced(
   trackTimeline = {},
   signalStates = {},
   simTime = 0,
-  currentDay = null
+  currentDay = null,
+  maintenanceTracks = new Set(),
+  disabledTracks = new Set()
 ) {
   // Rule 16: Check operating day
   if (!isTrainOperatingToday(train, currentDay)) {
     return { error: 'Train not operating today' };
   }
 
-  const tracks = station.tracks || {};
+  const allTracks = station.tracks || {};
+  const tracks = {};
+  for (const [id, track] of Object.entries(allTracks)) {
+    if (!maintenanceTracks.has(String(id)) && !disabledTracks.has(String(id))) {
+      tracks[id] = track;
+    }
+  }
+
   const platforms = station.platforms || {};
   const lineCrossings = station.line_crossings || {};
 

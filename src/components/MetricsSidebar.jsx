@@ -130,9 +130,13 @@ export default function MetricsSidebar() {
               Platform Density
             </p>
             {platforms.map(plat => {
-              const density = plat.passenger_density || 'low';
-              const barColor = density === 'high' ? '#DC2626' : density === 'medium' ? '#D97706' : '#16A34A';
-              const barPct   = density === 'high' ? 85 : density === 'medium' ? 55 : 25;
+              // Calculate dynamic density by counting trains currently assigned to this platform's tracks
+              const assignedCount = (trains.active || []).filter(t => t._assignedPlatform === plat.id).length;
+              
+              const barColor = assignedCount >= 2 ? '#DC2626' : assignedCount === 1 ? '#D97706' : '#16A34A';
+              const barPct   = assignedCount >= 2 ? 85 : assignedCount === 1 ? 55 : 15;
+              const letter   = assignedCount >= 2 ? 'H' : assignedCount === 1 ? 'M' : 'L';
+              
               return (
                 <div key={plat.id} style={{ marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ color: '#475569', fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace", width: '32px', flexShrink: 0 }}>
@@ -148,7 +152,7 @@ export default function MetricsSidebar() {
                     }} />
                   </div>
                   <span style={{ color: barColor, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace", width: '24px' }}>
-                    {density.charAt(0).toUpperCase()}
+                    {letter}
                   </span>
                 </div>
               );

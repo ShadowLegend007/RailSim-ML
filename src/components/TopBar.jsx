@@ -430,7 +430,7 @@ export default function TopBar() {
                 onClick={() => { 
                   useSimStore.setState({ menuOpen: false }); 
                   useSimStore.getState().exitSimulation(); // clears session so reload won't resume
-                  navigate('/');
+                  navigate('/thank-you');
                 }}
                 style={{ padding: '10px 14px', textAlign: 'left', background: '#F8FAFC', border: 'none', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, color: '#0F172A' }}
                 onMouseEnter={e => e.currentTarget.style.background = '#E2E8F0'}

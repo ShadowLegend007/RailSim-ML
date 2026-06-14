@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { generateInitialBatch } from '../utils/trainGenerator';
+import { greedyAssign } from '../utils/greedyAssign';
 
 // ─── Session Persistence Helpers ─────────────────────────────────────────────
 const SESSION_KEY = 'railsim_session';
@@ -392,6 +393,12 @@ export const useSimStore = create((set, get) => ({
     const departureSimTime = now + durMins;
 
     const newOcc = { ...state.trackOccupancy };
+    
+    // Clear old occupancy if train was already on a track (e.g. reassignment)
+    if (train._assignedTrack && newOcc[String(train._assignedTrack)]?.trainNo === trainNo) {
+      delete newOcc[String(train._assignedTrack)];
+    }
+
     newOcc[String(trackId)] = { trainNo, since: now, until: departureSimTime };
 
     const tag = source === 'ml'
@@ -441,10 +448,55 @@ export const useSimStore = create((set, get) => ({
   }),
 
   // ── Track Maintenance / Disable ───────────────────────────────────────────
+  _reassignTrainsOnTrack: (strTrackId) => {
+    const state = get();
+    const affectedTrains = state.trains.active.filter(t => String(t._assignedTrack) === strTrackId);
+
+    if (affectedTrains.length === 0) return;
+
+    affectedTrains.forEach(train => {
+      const latestState = get(); // fetch fresh state in loop
+      const cleanOccupancy = { ...latestState.trackOccupancy };
+      if (cleanOccupancy[strTrackId]?.trainNo === train.train_no) {
+         delete cleanOccupancy[strTrackId];
+      }
+
+      const result = greedyAssign(
+        train,
+        latestState.station.tracks,
+        latestState.station.platforms,
+        cleanOccupancy,
+        latestState.maintenanceTracks,
+        latestState.disabledTracks,
+        latestState.simTime,
+        null,
+        null,
+        latestState.station,
+        latestState.trackTimeline
+      );
+
+      if (result && result.track_id) {
+        get().assignTrain(train.train_no, result.track_id, result.platform_id, 'reassignment', 1.0, 0);
+        get().addEvent(`Train ${train.train_no} automatically reassigned from Track ${strTrackId} to Track ${result.track_id}`, 'info');
+      } else {
+        get().addConflict({
+          type: 'no_track',
+          trainNo: train.train_no,
+          trainName: train.train_name,
+          simTime: latestState.simTime,
+          message: `No available track to reassign ${train.train_no} after disabling Track ${strTrackId}. Train halted.`,
+        });
+        get().haltTrain(train.train_no, true);
+      }
+    });
+  },
+
   markMaintenance: (trackId) => set((state) => {
+    const strTrackId = String(trackId);
     const next = new Set(state.maintenanceTracks);
-    next.add(String(trackId));
-    get().addEvent(`Track ${trackId} marked MAINTENANCE`, 'user');
+    next.add(strTrackId);
+    setTimeout(() => get()._reassignTrainsOnTrack(strTrackId), 0);
+    get().addEvent(`Track ${strTrackId} marked MAINTENANCE`, 'user');
     return { maintenanceTracks: next };
   }),
 
@@ -456,9 +508,11 @@ export const useSimStore = create((set, get) => ({
   }),
 
   disableTrack: (trackId) => set((state) => {
+    const strTrackId = String(trackId);
     const next = new Set(state.disabledTracks);
-    next.add(String(trackId));
-    get().addEvent(`Track ${trackId} DISABLED`, 'user');
+    next.add(strTrackId);
+    setTimeout(() => get()._reassignTrainsOnTrack(strTrackId), 0);
+    get().addEvent(`Track ${strTrackId} DISABLED`, 'user');
     return { disabledTracks: next };
   }),
 
